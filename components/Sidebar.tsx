@@ -3,13 +3,12 @@ import React from 'react';
 import { View, CompanySettings } from '../types';
 import { useApp } from '../App';
 import { getThemeClasses } from './utils';
-import { SettingsIcon, InfoIcon, LayoutTemplateIcon, BarChart3Icon, FileTextIcon, FilePlusIcon, ArchiveIcon, InboxInIcon, HomeIcon, FileCheck2Icon } from './icons';
+import { SettingsIcon, InfoIcon, LayoutTemplateIcon, BarChart3Icon, FileTextIcon, FilePlusIcon, ArchiveIcon, InboxInIcon, HomeIcon, FileCheck2Icon, SendIcon } from './icons';
 
 interface SidebarProps {
   className?: string;
 }
 
-// Inline icons for toggle to ensure specific look without editing icons.tsx
 const ChevronRightIcon = ({ className }: { className?: string }) => (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <path d="m9 18 6-6-6-6"/>
@@ -42,27 +41,27 @@ export default function Sidebar({ className }: SidebarProps): React.ReactNode {
     text: string;
     isPrimary?: boolean;
     isSpecial?: boolean;
+    isArchive?: boolean;
     compareViews?: View[]
-  }> = ({ view, currentView, text, isPrimary = false, isSpecial = false, compareViews }) => {
+  }> = ({ view, currentView, text, isPrimary = false, isSpecial = false, isArchive = false, compareViews }) => {
     const isActive = currentView === view || (compareViews && compareViews.includes(currentView));
     
-    // Base container class
     let containerClass = `
         group flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 cursor-pointer
         ${isSidebarCollapsed ? 'justify-center w-12 h-12 mx-auto' : 'w-full'}
     `;
 
-    // Active State Styling
     if (isActive) {
       if (isPrimary) {
         containerClass += ` btn-3d ${theme.bg} text-white shadow-lg`;
       } else if (isSpecial) {
         containerClass += ` bg-violet-600 text-white shadow-lg btn-3d`;
+      } else if (isArchive) {
+        containerClass += ` bg-emerald-600 text-white shadow-lg btn-3d`;
       } else {
         containerClass += ` bg-white/10 text-white border border-white/10`;
       }
     } else {
-        // Inactive State Styling - Brightened to text-slate-300 for better visibility
        containerClass += ' text-slate-300 hover:text-white hover:bg-white/5';
     }
 
@@ -79,7 +78,6 @@ export default function Sidebar({ className }: SidebarProps): React.ReactNode {
             </span>
         )}
         
-        {/* Tooltip for collapsed mode */}
         {isSidebarCollapsed && (
             <div className="absolute right-14 bg-slate-900 text-white text-xs font-bold px-3 py-1.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 border border-white/10 shadow-xl">
                 {text}
@@ -96,7 +94,6 @@ export default function Sidebar({ className }: SidebarProps): React.ReactNode {
         ${isSidebarCollapsed ? 'w-24' : 'w-72'} 
         ${className}
     `}>
-      {/* Brand Header */}
       <div className={`p-4 border-b border-white/5 flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'} transition-all`}>
         <div 
             onClick={toggleSidebar}
@@ -118,7 +115,6 @@ export default function Sidebar({ className }: SidebarProps): React.ReactNode {
         )}
       </div>
 
-      {/* Navigation */}
       <nav className="p-3 space-y-1.5 flex-1 overflow-y-auto custom-scrollbar flex flex-col">
         {!isSidebarCollapsed && <p className="px-3 text-[10px] font-black text-slate-500 uppercase tracking-widest mt-2 mb-1">الرئيسية</p>}
         <NavButton view={View.DASHBOARD} currentView={currentView} text="الرئيسية" />
@@ -129,6 +125,7 @@ export default function Sidebar({ className }: SidebarProps): React.ReactNode {
         {!isSidebarCollapsed && <p className="px-3 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">إجراءات</p>}
         <NavButton view={View.GENERATOR} currentView={currentView} text="إنشاء خطاب" isPrimary />
         <NavButton view={View.INBOUND_FORM} currentView={currentView} text="تسجيل وارد" isSpecial />
+        <NavButton view={View.OUTBOUND_ARCHIVE_FORM} currentView={currentView} text="أرشفة صادر" isArchive />
         
         <div className={`my-4 border-t border-white/5 mx-2 ${isSidebarCollapsed ? 'border-transparent' : ''}`}></div>
 
@@ -146,7 +143,6 @@ export default function Sidebar({ className }: SidebarProps): React.ReactNode {
         <NavButton view={View.ABOUT} currentView={currentView} text="حول" />
       </nav>
 
-      {/* Footer - Toggle with Icon and Text */}
       <div className="p-3 border-t border-white/5 bg-white/5">
           <button 
             onClick={toggleSidebar}
@@ -154,7 +150,6 @@ export default function Sidebar({ className }: SidebarProps): React.ReactNode {
             title={isSidebarCollapsed ? "توسيع القائمة" : "طي القائمة"}
           >
               <div className={`text-slate-400 group-hover:text-white transition-colors`}>
-                  {/* Logic: If collapsed, show Left Arrow (expand). If expanded, show Right Arrow (collapse) for RTL layout */}
                   {isSidebarCollapsed ? <ChevronLeftIcon className="w-5 h-5" /> : <ChevronRightIcon className="w-5 h-5" />}
               </div>
               {!isSidebarCollapsed && (

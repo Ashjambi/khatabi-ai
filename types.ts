@@ -67,6 +67,7 @@ export enum View {
   DETAILS,
   ARCHIVE,
   INBOUND_FORM,
+  OUTBOUND_ARCHIVE_FORM,
   TEMPLATES,
   TEMPLATE_CREATOR,
   AI_PERSONALIZATION,
@@ -77,7 +78,6 @@ export enum View {
   REPORTING,
 }
 
-// @FIX: Added missing ReferralStatus enum
 export enum ReferralStatus {
     PENDING = 'معلق',
     COMPLETED = 'مكتمل',

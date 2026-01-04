@@ -1,12 +1,12 @@
 
 import React, { useMemo } from 'react';
-// @FIX: Removed unused ReferralStatus from imports to fix module export error
 import { View } from '../types';
 import { useApp } from '../App';
 import LetterGenerator from './LetterGenerator';
 import LetterDetails from './LetterDetails';
 import Archive from './Archive';
 import InboundLetterForm from './InboundLetterForm';
+import OutboundArchiveForm from './OutboundArchiveForm';
 import Dashboard from './Dashboard';
 import TemplateLibrary from './TemplateLibrary';
 import TemplateCreator from './TemplateCreator';
@@ -50,6 +50,8 @@ export default function MainContent(props: MainContentProps): React.ReactNode {
           return <Archive />;
         case View.INBOUND_FORM:
           return <InboundLetterForm />;
+        case View.OUTBOUND_ARCHIVE_FORM:
+          return <OutboundArchiveForm />;
         case View.TEMPLATES:
           return <TemplateLibrary />;
         case View.TEMPLATE_CREATOR:
@@ -71,7 +73,6 @@ export default function MainContent(props: MainContentProps): React.ReactNode {
 
   return (
     <div className="h-full">
-        {/* We removed the wrapping card here to let individual components manage their own glass cards */}
         {renderView()}
     </div>
   )
