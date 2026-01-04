@@ -81,27 +81,23 @@ export default function LetterGenerator() {
             return;
         }
 
+        const apiKey = process.env.API_KEY;
+        if (!apiKey || apiKey === "undefined") {
+            toast.error("مفتاح API غير متوفر. تأكد من ضبطه في إعدادات Cloudflare.");
+            return;
+        }
+
         setIsLoading(true);
         try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            const ai = new GoogleGenAI({ apiKey });
             
             const systemInstruction = `أنت خبير الصياغة الإدارية. 
-            قاعدة لغوية قطعية: يجب أن تكون جميع النصوص العربية بكلمات متصلة وطبيعية (يُمنع منعاً باتاً فصل الحروف). 
-            المهمة: إنشاء 3 مسودات (رسمية، حازمة، دبلوماسية) بصيغة HTML.
-            الأسلوب المطلوب: ${learnedPrinciples.map(p => p.text).join(' - ')}`;
+            قاعدة لغوية قطعية: يجب أن تكون جميع النصوص العربية بكلمات متصلة وطبيعية. 
+            المهمة: إنشاء 3 مسودات بصيغة HTML.`;
 
             const userPrompt = isReplyMode 
-                ? `أنت ترد على خطاب وارد بالمعطيات التالية:
-                   السياق الأصلي: ${originalLetterContent}
-                   توجيه الرد الحالي: ${objectiveText}
-                   الأطراف: من ${sender} إلى ${receiver}
-                   الموضوع: ${subject}
-                   المطلوب: صياغة رد رسمي متصل الحروف يشير للمرجع.`
-                : `أنشئ خطاباً رسمياً جديداً:
-                   الموضوع: ${subject}
-                   المحتوى المطلوب: ${objectiveText}
-                   المرسل: ${sender} | المستلم: ${receiver}
-                   الصياغة: لغة عربية رصينة متصلة الحروف.`;
+                ? `رد على خطاب: ${originalLetterContent}. التوجيه: ${objectiveText}. من ${sender} إلى ${receiver}. الموضوع: ${subject}.`
+                : `أنشئ خطاباً: الموضوع: ${subject}. المحتوى: ${objectiveText}. المرسل: ${sender} | المستلم: ${receiver}.`;
 
             const response = await ai.models.generateContent({
                 model: "gemini-3-flash-preview",
@@ -126,7 +122,7 @@ export default function LetterGenerator() {
             setGeneratedContent(JSON.parse(response.text || "{}"));
             setStep(1);
         } catch (e) {
-            toast.error("فشلت الصياغة الذكية. يرجى المحاولة لاحقاً.");
+            toast.error("فشلت الصياغة الذكية. يرجى التحقق من إعدادات الوصول.");
         } finally {
             setIsLoading(false);
         }
@@ -136,22 +132,28 @@ export default function LetterGenerator() {
         if (e) e.preventDefault();
         if (!chatInput.trim() || isChatLoading) return;
 
+        const apiKey = process.env.API_KEY;
+        if (!apiKey || apiKey === "undefined") {
+            toast.error("مفتاح API مفقود.");
+            return;
+        }
+
         const userMessage = chatInput;
         setChatInput('');
         setChatHistory(prev => [...prev, { role: 'user', text: userMessage }]);
         setIsChatLoading(true);
 
         try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            const ai = new GoogleGenAI({ apiKey });
             const response = await ai.models.generateContent({
                 model: "gemini-3-flash-preview",
                 contents: {
                     parts: [{
-                        text: `النص الحالي للخطاب هو: \n${finalBody}\n\nطلب المستخدم: ${userMessage}\n\nالمطلوب: قم بتعديل النص بناءً على الطلب مع الحفاظ على الرسمية واللغة العربية المتصلة. أعد النص الجديد بصيغة HTML وردودك في JSON.`
+                        text: `النص الحالي: \n${finalBody}\n\nطلب التعديل: ${userMessage}\n\nأعد النص المحدث بصيغة HTML في JSON.`
                     }]
                 } as any,
                 config: {
-                    systemInstruction: "أنت مساعد صياغة إداري ذكي. عندما يطلب المستخدم تعديلات، قم بتحديث الخطاب وأعد النتيجة بصيغة JSON تحتوي على الحقول (updated_body) و (ai_comment). تأكد من صحة الحروف العربية واتصالها.",
+                    systemInstruction: "أنت مساعد صياغة إداري. أعد JSON يحتوي على (updated_body) و (ai_comment).",
                     responseMimeType: "application/json",
                     responseSchema: {
                         type: Type.OBJECT,
@@ -168,10 +170,10 @@ export default function LetterGenerator() {
             if (result.updated_body) {
                 setFinalBody(result.updated_body);
                 setChatHistory(prev => [...prev, { role: 'model', text: result.ai_comment }]);
-                toast.success("تم تحديث النص بناءً على ملاحظاتك.");
+                toast.success("تم التحديث.");
             }
         } catch (error) {
-            toast.error("فشل المساعد الذكي في معالجة طلبك.");
+            toast.error("فشل التعديل الذكي.");
         } finally {
             setIsChatLoading(false);
         }
@@ -188,7 +190,7 @@ export default function LetterGenerator() {
                 } 
             } 
         });
-        toast.success("تم اعتماد الخطاب وحفظه بنجاح.");
+        toast.success("تم الحفظ بنجاح.");
     };
 
     return (
@@ -218,7 +220,6 @@ export default function LetterGenerator() {
 
             <div className={`grid grid-cols-1 ${isReplyMode ? 'lg:grid-cols-12' : ''} gap-8`}>
                 
-                {/* --- لوحة الخطاب الوارد (المرجع) --- */}
                 {isReplyMode && parentLetter && (
                     <div className={`${isContextCollapsed ? 'lg:col-span-1' : 'lg:col-span-4'} transition-all duration-500`}>
                         <div className="glass-card sticky top-6 border-indigo-500/20 bg-slate-950/40 overflow-hidden shadow-2xl rounded-3xl">
@@ -241,7 +242,7 @@ export default function LetterGenerator() {
                                     
                                     <div className="bg-slate-950/70 p-5 rounded-2xl border border-white/10 shadow-inner ring-1 ring-white/5">
                                         <p className="text-[10px] font-black text-indigo-400 mb-4 flex items-center gap-2 uppercase tracking-widest border-b border-white/5 pb-2">
-                                            <FileTextIcon className="w-3.5 h-3.5"/> نص المتن (للقراءة والتحليل)
+                                            <FileTextIcon className="w-3.5 h-3.5"/> نص المتن
                                         </p>
                                         <div className="text-[14px] text-white font-bold leading-relaxed max-h-[500px] overflow-y-auto custom-scrollbar prose prose-invert prose-sm prose-p:text-white prose-strong:text-indigo-300" dangerouslySetInnerHTML={{ __html: sanitizeHTML(parentLetter.body) }} />
                                     </div>
@@ -256,7 +257,6 @@ export default function LetterGenerator() {
                     </div>
                 )}
 
-                {/* --- منطقة العمل الرئيسية --- */}
                 <div className={`${isReplyMode ? (isContextCollapsed ? 'lg:col-span-11' : 'lg:col-span-8') : 'max-w-5xl mx-auto w-full'} transition-all duration-500`}>
                     
                     {step === 0 && (
@@ -289,14 +289,14 @@ export default function LetterGenerator() {
                                     onChange={e => setObjectiveText(e.target.value)}
                                     rows={5}
                                     className="w-full input-inset p-6 rounded-2xl text-base font-bold leading-relaxed border-indigo-500/10 focus:border-indigo-500 shadow-2xl transition-all placeholder-slate-600 bg-slate-950/20"
-                                    placeholder="اشرح هنا ما تريد تحقيقه من هذا الخطاب، وسيقوم النظام بصياغته باحترافية..."
+                                    placeholder="اشرح هنا ما تريد تحقيقه..."
                                 />
                                 
                                 {isReplyMode && (
                                     <div className="space-y-4">
                                         <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest px-1 flex items-center gap-2">
                                             {isLoadingReplies ? <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-indigo-500"></div> : <SparklesIcon className="w-3 h-3" />}
-                                            مسارات استراتيجية مقترحة (الرد السريع)
+                                            مسارات استراتيجية مقترحة
                                         </p>
                                         <div className="flex flex-col gap-2.5">
                                             {smartReplies.map((reply, i) => (
@@ -383,12 +383,10 @@ export default function LetterGenerator() {
                              </div>
 
                              <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-                                {/* Editor Area */}
                                 <div className="xl:col-span-8 shadow-3xl rounded-3xl overflow-hidden border border-white/5 h-fit">
                                     <RichTextEditor value={finalBody} onChange={setFinalBody} ringColor={theme.ring} minHeight="min-h-[650px]" />
                                 </div>
 
-                                {/* AI Interaction Chat */}
                                 <div className="xl:col-span-4 flex flex-col bg-slate-900/60 rounded-3xl border border-white/10 shadow-2xl overflow-hidden max-h-[750px]">
                                     <div className="p-4 bg-white/5 border-b border-white/10 flex items-center gap-3">
                                         <div className="p-2 bg-indigo-500/20 rounded-lg"><BotIcon className="w-5 h-5 text-indigo-400" /></div>
@@ -398,15 +396,13 @@ export default function LetterGenerator() {
                                         </div>
                                     </div>
 
-                                    {/* Chat Messages */}
                                     <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar min-h-[300px]">
                                         {chatHistory.length === 0 ? (
                                             <div className="h-full flex flex-col items-center justify-center text-center p-6 opacity-40">
                                                 <MessageSquareIcon className="w-12 h-12 mb-4 text-slate-500" />
                                                 <p className="text-xs font-bold text-slate-400 leading-relaxed">
                                                     "اجعل الخطاب أكثر إيجازاً"<br/>
-                                                    "أضف فقرة تطلب موعداً للاجتماع"<br/>
-                                                    "غير نبرة الخطاب لتكون أكثر ودية"
+                                                    "أضف فقرة تطلب موعداً للاجتماع"
                                                 </p>
                                             </div>
                                         ) : (
@@ -436,7 +432,6 @@ export default function LetterGenerator() {
                                         <div ref={chatEndRef} />
                                     </div>
 
-                                    {/* Chat Input */}
                                     <form onSubmit={handleChatSubmit} className="p-4 bg-white/5 border-t border-white/10 flex items-center gap-2">
                                         <input 
                                             type="text"
