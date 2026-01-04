@@ -110,23 +110,47 @@ export default function OutboundArchiveForm(): React.ReactNode {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    updateState({ attachments: [file, ...formState.attachments] });
+    // دعم TIFF
+    const isTiff = file.type.startsWith('image/tif') || file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff');
+
     setIsScanning(true);
     
     try {
-        const dataUrl = await fileToDataURL(file);
-        const [header, data] = dataUrl.split(',');
-        const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+        let base64Data: string;
+        let mimeType: string;
+
+        if (isTiff) {
+            const arrayBuffer = await file.arrayBuffer();
+            const tiff = new Tiff({ buffer: arrayBuffer });
+            const canvas = tiff.toCanvas();
+            if (!canvas) throw new Error("Could not convert TIFF");
+            const dataUrl = canvas.toDataURL('image/png');
+            base64Data = dataUrl.split(',')[1];
+            mimeType = 'image/png';
+        } else {
+            const dataUrl = await fileToDataURL(file);
+            const [header, data] = dataUrl.split(',');
+            base64Data = data;
+            mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+        }
+
+        // تحضير السياق (آخر 20 خطاب للمطابقة)
+        const contextLetters = letters.map(l => ({ 
+            id: l.id, 
+            subject: l.subject, 
+            internalRefNumber: l.internalRefNumber, 
+            date: l.date 
+        })).slice(0, 20);
 
         const extractedData = await extractDetailsFromLetterImage(
-            data, 
+            base64Data, 
             mimeType, 
             settings.departments, 
             Object.values(LetterType), 
             Object.values(PriorityLevel), 
             Object.values(ConfidentialityLevel), 
             [], 
-            letters.map(l => ({ id: l.id, subject: l.subject, internalRefNumber: l.internalRefNumber, date: l.date }))
+            contextLetters
         );
         
         updateState({
@@ -137,13 +161,22 @@ export default function OutboundArchiveForm(): React.ReactNode {
             priority: (extractedData.priority as PriorityLevel) || formState.priority,
             confidentiality: (extractedData.confidentiality as ConfidentialityLevel) || formState.confidentiality,
             dateSent: extractedData.date || formState.dateSent,
-            referenceId: extractedData.referenceId || formState.referenceId
+            referenceId: extractedData.referenceId || formState.referenceId,
+            attachments: [file, ...formState.attachments]
         });
-        toast.success("تم استخلاص بيانات الصادر بنجاح.");
+
+        if (extractedData.referenceId) {
+            toast.success("تم الربط آلياً بالمعاملة المرجعية.");
+        } else {
+            toast.success("تم استخلاص البيانات بنجاح.");
+        }
+
     } catch(error) {
-        toast.error("فشل المسح الضوئي للخطاب.");
+        console.error(error);
+        toast.error("فشل المسح الضوئي للخطاب. يرجى التحقق من جودة الصورة.");
     } finally {
         setIsScanning(false);
+        if (e.target) e.target.value = '';
     }
   };
 
@@ -159,7 +192,7 @@ export default function OutboundArchiveForm(): React.ReactNode {
         return {
             id: `arch_att_${Date.now()}_${index}`,
             name: file.name,
-            type: file.type.startsWith('image/') ? 'image' : 'pdf' as any,
+            type: file.type.startsWith('image/') ? 'image' : file.type === 'application/pdf' ? 'pdf' : 'other' as any,
             url,
             size: `${(file.size / 1024 / 1024).toFixed(2)} MB`
         };
@@ -175,7 +208,7 @@ export default function OutboundArchiveForm(): React.ReactNode {
         date: formState.dateSent,
         type: formState.letterType,
         tone: Tone.NEUTRAL,
-        body: `<p><strong>أرشفة صادر خارجي:</strong> هذا الخطاب تم إرساله يدوياً وتمت أرشفته كنسخة ضوئية.</p>`,
+        body: `<p><strong>أرشفة صادر خارجي:</strong> تمت أرشفة هذا الخطاب الموقَّع آلياً عبر المسح الضوئي.</p>`,
         attachments: newAttachments,
         externalRefNumber: formState.externalRefNumber,
         priority: formState.priority,
@@ -185,7 +218,10 @@ export default function OutboundArchiveForm(): React.ReactNode {
         referenceId: formState.referenceId,
     };
 
-    dispatch({ type: 'REGISTER_INBOUND', payload: { ...letterData, correspondenceType: CorrespondenceType.OUTBOUND, status: LetterStatus.SENT } as any });
+    dispatch({ 
+        type: 'REGISTER_INBOUND', 
+        payload: { ...letterData, correspondenceType: CorrespondenceType.OUTBOUND, status: LetterStatus.SENT } as any 
+    });
     toast.success("تمت أرشفة الخطاب الصادر بنجاح.");
   };
 
@@ -209,33 +245,50 @@ export default function OutboundArchiveForm(): React.ReactNode {
                 {isScanning ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> : <SparklesIcon className="w-6 h-6" />}
                 <span>{isScanning ? 'جاري قراءة الخطاب...' : 'مسح ضوئي للنسخة الموقعة (AI)'}</span>
             </button>
-            <input type="file" ref={aiScanInputRef} onChange={handleAiScan} className="hidden" />
+            <input type="file" ref={aiScanInputRef} onChange={handleAiScan} className="hidden" accept="application/pdf,image/*" />
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
              <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-2xl p-5">
-                <h3 className="text-sm font-black text-emerald-400 mb-4 flex items-center gap-2">
-                    <LinkIcon className="w-4 h-4" /> ربط بمعاملة سابقة
-                </h3>
-                <div className="relative">
-                    <input
-                        type="text"
-                        value={searchTerm}
-                        onChange={(e) => { setSearchTerm(e.target.value); setIsSearchOpen(true); }}
-                        placeholder="ابحث عن المعاملة المرتبطة (اختياري)..."
-                        className="w-full bg-slate-950/40 border border-white/5 p-3 rounded-xl text-sm text-white focus:ring-2 focus:ring-emerald-500 outline-none"
-                    />
-                    {isSearchOpen && searchTerm && filteredLetters.length > 0 && (
-                        <div className="absolute z-20 w-full mt-2 bg-slate-900 border border-white/10 rounded-xl shadow-2xl overflow-hidden">
-                            {filteredLetters.map(l => (
-                                <button key={l.id} type="button" onClick={() => { updateState({ referenceId: l.id }); setIsSearchOpen(false); setSearchTerm(l.subject); }} className="w-full text-right p-4 hover:bg-white/5 border-b border-white/5 last:border-0">
-                                    <p className="text-sm font-bold text-white">{l.subject}</p>
-                                    <p className="text-[10px] text-slate-500 mt-1">{l.internalRefNumber} • {l.date}</p>
-                                </button>
-                            ))}
-                        </div>
+                <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-black text-emerald-400 flex items-center gap-2">
+                        <LinkIcon className="w-4 h-4" /> ربط بمعاملة سابقة
+                    </h3>
+                    {formState.referenceId && (
+                        <button type="button" onClick={() => updateState({ referenceId: undefined })} className="text-[10px] text-rose-400 font-bold">إلغاء الربط</button>
                     )}
                 </div>
+                
+                {selectedParentLetter ? (
+                    <div className="bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/20 flex justify-between items-center">
+                        <div>
+                            <p className="text-sm font-bold text-white">{selectedParentLetter.subject}</p>
+                            <p className="text-[10px] text-emerald-300">مرتبط بمرجع: {selectedParentLetter.internalRefNumber}</p>
+                        </div>
+                        <CheckCircleIcon className="w-5 h-5 text-emerald-500" />
+                    </div>
+                ) : (
+                    <div className="relative">
+                        <input
+                            type="text"
+                            value={searchTerm}
+                            onChange={(e) => { setSearchTerm(e.target.value); setIsSearchOpen(true); }}
+                            onFocus={() => setIsSearchOpen(true)}
+                            placeholder="ابحث عن المعاملة المرتبطة (اختياري)..."
+                            className="w-full bg-slate-950/40 border border-white/5 p-3 rounded-xl text-sm text-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                        />
+                        {isSearchOpen && searchTerm && filteredLetters.length > 0 && (
+                            <div className="absolute z-20 w-full mt-2 bg-slate-900 border border-white/10 rounded-xl shadow-2xl overflow-hidden">
+                                {filteredLetters.map(l => (
+                                    <button key={l.id} type="button" onClick={() => { updateState({ referenceId: l.id }); setIsSearchOpen(false); setSearchTerm(l.subject); }} className="w-full text-right p-4 hover:bg-white/5 border-b border-white/5 last:border-0">
+                                        <p className="text-sm font-bold text-white">{l.subject}</p>
+                                        <p className="text-[10px] text-slate-500 mt-1">{l.internalRefNumber} • {l.date}</p>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -263,7 +316,7 @@ export default function OutboundArchiveForm(): React.ReactNode {
                     <div className="flex flex-col items-center gap-3">
                         <div className="p-4 bg-indigo-500/10 rounded-full text-indigo-400 group-hover:scale-110 transition-transform"><CheckCircleIcon className="w-8 h-8" /></div>
                         <p className="text-slate-400 font-bold">اسحب المرفقات هنا أو انقر للاختيار</p>
-                        <p className="text-[10px] text-slate-600 uppercase font-black tracking-widest">PDF, JPG, PNG</p>
+                        <p className="text-[10px] text-slate-600 uppercase font-black tracking-widest">PDF, JPG, PNG, TIFF</p>
                     </div>
                 </div>
                 {formState.attachments.length > 0 && (
@@ -279,7 +332,7 @@ export default function OutboundArchiveForm(): React.ReactNode {
             </div>
 
             <div className="pt-6">
-                <button type="submit" className="w-full py-5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xl rounded-2xl shadow-3xl transition-all active:scale-95 flex items-center justify-center gap-3">
+                <button type="submit" disabled={isScanning} className="w-full py-5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xl rounded-2xl shadow-3xl transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50">
                     <CheckCircleIcon className="w-7 h-7" />
                     <span>إتمام الأرشفة والتسجيل</span>
                 </button>
