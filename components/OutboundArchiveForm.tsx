@@ -54,9 +54,6 @@ export default function OutboundArchiveForm(): React.ReactNode {
   });
 
   const [isScanning, setIsScanning] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
-
   const theme = getThemeClasses(settings.primaryColor);
   const aiScanInputRef = useRef<HTMLInputElement>(null);
 
@@ -64,23 +61,17 @@ export default function OutboundArchiveForm(): React.ReactNode {
       setFormState(prev => ({ ...prev, ...payload }));
   };
 
-  const filteredLetters = useMemo(() => {
-      if (!searchTerm) return [];
-      const lower = searchTerm.toLowerCase();
-      return letters.filter(l => l.subject.toLowerCase().includes(lower) || (l.internalRefNumber || '').toLowerCase().includes(lower)).slice(0, 5);
-  }, [searchTerm, letters]);
-
   const handleAiScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-        toast.error("حجم الملف كبير جداً للمسح الذكي. يرجى اختيار ملف أصغر.");
+    if (file.size > 10 * 1024 * 1024) {
+        toast.error("حجم الملف كبير جداً (أقصى حد 10MB).");
         return;
     }
 
     setIsScanning(true);
-    const loadingToast = toast.loading("جاري مسح نسخة الصادر ضوئياً...");
+    const loadingToast = toast.loading("جاري مسح نسخة الصادر...");
     
     try {
         let base64Data: string;
@@ -117,9 +108,12 @@ export default function OutboundArchiveForm(): React.ReactNode {
             attachments: [file, ...formState.attachments]
         });
 
-        toast.success("تم استخلاص بيانات الصادر!", { id: loadingToast });
+        toast.success("تم استخلاص البيانات!", { id: loadingToast });
     } catch(error: any) {
-        toast.error(`فشل المسح: ${error.message}`, { id: loadingToast });
+        const errorMsg = error.message.includes("API_KEY_NOT_FOUND_IN_BROWSER") 
+            ? "تنبيه: يجب إضافة API_KEY في إعدادات Build Variables في Cloudflare لكي يعمل التطبيق." 
+            : `فشل المسح: ${error.message}`;
+        toast.error(errorMsg, { id: loadingToast, duration: 6000 });
     } finally {
         setIsScanning(false);
         if (e.target) e.target.value = '';
@@ -129,7 +123,7 @@ export default function OutboundArchiveForm(): React.ReactNode {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formState.subject || !formState.to || formState.attachments.length === 0) {
-      toast.error('الموضوع والجهة المستلمة والنسخة الضوئية حقول إلزامية.');
+      toast.error('الموضوع والجهة المستلمة والنسخة المرفقة حقول إلزامية.');
       return;
     }
 
@@ -165,11 +159,11 @@ export default function OutboundArchiveForm(): React.ReactNode {
         <h2 className="text-3xl font-black text-white">أرشفة صادر جاهز</h2>
       </div>
       
-      <div className="glass-card p-8 space-y-8 rounded-[2.5rem] border-white/10 shadow-3xl">
+      <div className="glass-card p-8 space-y-8 rounded-[2rem] border-white/10 shadow-3xl">
         <div className="flex justify-center">
             <button onClick={() => aiScanInputRef.current?.click()} disabled={isScanning} className={`w-full md:w-auto px-10 py-5 rounded-2xl font-black text-white flex items-center gap-3 transition-all ${isScanning ? 'bg-slate-700' : theme.bg + ' hover:brightness-110'}`}>
                 {isScanning ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> : <SparklesIcon className="w-6 h-6" />}
-                <span>{isScanning ? 'جاري المسح...' : 'مسح نسخة الصادر الموقعة (AI)'}</span>
+                <span>{isScanning ? 'جاري التحليل...' : 'مسح نسخة الصادر (AI)'}</span>
             </button>
             <input type="file" ref={aiScanInputRef} onChange={handleAiScan} className="hidden" accept="application/pdf,image/*" />
         </div>

@@ -2,19 +2,19 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Letter, ExtractedLetterDetails, EnhancementSuggestion, FollowUpItem, SmartReply, Tone, SmartSearchResult } from "../types";
 
-// وظيفة مساعدة للحصول على المفتاح مع التحقق
+/**
+ * وظيفة للتحقق من المفتاح وتوفير رسالة خطأ واضحة
+ */
 const getApiKey = () => {
     const key = process.env.API_KEY;
-    if (!key || key === "undefined") {
-        throw new Error("API_KEY_MISSING");
+    if (!key || key === "undefined" || key === "") {
+        throw new Error("API_KEY_NOT_FOUND_IN_BROWSER");
     }
     return key;
 };
 
 const ARABIC_STRICT_CONNECTED_SCRIPT = `
-قاعدة لغوية صارمة جداً:
-يجب أن تكون جميع النصوص العربية بكلمات متصلة وطبيعية تماماً. 
-يُمنع منعاً باتاً فصل الحروف. 
+قاعدة لغوية صارمة: يجب أن تكون النصوص العربية بكلمات متصلة تماماً (مثل "خطاب" وليس "خ ط ا ب").
 `;
 
 export async function extractDetailsFromLetterImage(
@@ -28,6 +28,7 @@ export async function extractDetailsFromLetterImage(
   existingLetters: { id: string, subject: string, internalRefNumber?: string, externalRefNumber?: string, date: string }[]
 ): Promise<ExtractedLetterDetails> {
   try {
+      // تهيئة جديدة عند كل استدعاء لضمان الحصول على أحدث مفتاح من البيئة
       const ai = new GoogleGenAI({ apiKey: getApiKey() });
       
       const recentLetters = existingLetters.slice(0, 10);
@@ -37,15 +38,15 @@ export async function extractDetailsFromLetterImage(
           ).join('\n')
         : "";
 
-      const systemInstruction = `أنت مساعد إداري خبير. ${ARABIC_STRICT_CONNECTED_SCRIPT}
-      المهمة: حلل المستند واستخرج البيانات بصيغة JSON.
+      const systemInstruction = `أنت خبير OCR إداري. ${ARABIC_STRICT_CONNECTED_SCRIPT}
+      حلل المستند واستخرج البيانات كـ JSON.
       السياق: ${lettersContext}`;
 
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: {
             parts: [
-                { text: `استخرج الحقول (subject, from, to, date, externalRefNumber, summary, category) من المستند بصيغة JSON.` },
+                { text: `استخرج الحقول (subject, from, to, date, externalRefNumber, summary) بصيغة JSON.` },
                 { inlineData: { mimeType, data: base64Image.replace(/\s/g, '') } }
             ]
         },
@@ -72,14 +73,15 @@ export async function extractDetailsFromLetterImage(
       });
 
       const text = response.text;
-      if (!text) throw new Error("لم يتم استلام رد من الذكاء الاصطناعي");
+      if (!text) throw new Error("لم يصل رد من الذكاء الاصطناعي");
       return JSON.parse(text.trim()) as ExtractedLetterDetails;
+
   } catch (error: any) {
-      if (error.message === "API_KEY_MISSING") {
-          throw new Error("مفتاح API غير مضبوط في إعدادات الخادم (Cloudflare Environment). يرجى التحقق من إعدادات المتغيرات.");
+      if (error.message === "API_KEY_NOT_FOUND_IN_BROWSER") {
+          throw new Error("لم يتم حقن مفتاح API في المتصفح. تأكد من إضافة API_KEY في متغيرات Build في Cloudflare وليس فقط Variables.");
       }
       console.error("Gemini OCR Error:", error);
-      throw new Error(error.message || "فشل تحليل المستند");
+      throw error;
   }
 }
 
@@ -87,7 +89,6 @@ export async function generateSmartReplies(letter: Letter): Promise<SmartReply[]
     try {
         const ai = new GoogleGenAI({ apiKey: getApiKey() });
         const content = letter.summary || letter.body.replace(/<[^>]*>?/gm, ' ');
-        
         const response = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
             contents: `اقترح 3 مسارات للرد على: ${letter.subject}. المحتوى: ${content}`,
@@ -109,7 +110,6 @@ export async function generateSmartReplies(letter: Letter): Promise<SmartReply[]
                 }
             }
         });
-        
         return JSON.parse(response.text || "[]") as SmartReply[];
     } catch (e) {
         return [];
@@ -133,8 +133,7 @@ export async function enhanceLetter(text: string): Promise<EnhancementSuggestion
                             original_part: { type: Type.STRING },
                             suggested_improvement: { type: Type.STRING },
                             reason: { type: Type.STRING }
-                        },
-                        required: ["original_part", "suggested_improvement", "reason"]
+                        }
                     }
                 }
             }
@@ -206,8 +205,7 @@ export async function searchLettersSmartly(query: string, letters: Letter[]): Pr
                             letterId: { type: Type.STRING },
                             relevanceReason: { type: Type.STRING },
                             confidenceScore: { type: Type.NUMBER }
-                        },
-                        required: ["letterId", "relevanceReason", "confidenceScore"]
+                        }
                     }
                 }
             }

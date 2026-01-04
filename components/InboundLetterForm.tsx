@@ -89,8 +89,7 @@ export default function InboundLetterForm(): React.ReactNode {
       const lower = searchTerm.toLowerCase();
       return letters.filter(l => 
           l.subject.toLowerCase().includes(lower) || 
-          (l.internalRefNumber || '').toLowerCase().includes(lower) ||
-          (l.externalRefNumber || '').toLowerCase().includes(lower)
+          (l.internalRefNumber || '').toLowerCase().includes(lower)
       ).slice(0, 5);
   }, [searchTerm, letters]);
 
@@ -100,18 +99,9 @@ export default function InboundLetterForm(): React.ReactNode {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // التحقق من الحجم - Cloudflare و Gemini يفضلان الطلبات تحت 4MB للموثوقية
-    if (file.size > 5 * 1024 * 1024) {
-        toast.error("حجم الملف كبير جداً (أقصى حد 5MB). يرجى ضغط الملف أو رفعه كصورة.");
-        if (e.target) e.target.value = '';
-        return;
-    }
-
-    const isTiff = file.type.startsWith('image/tif') || file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff');
-    const isSupported = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'].includes(file.type);
-
-    if (!isTiff && !isSupported) {
-        toast.error("صيغة الملف غير مدعومة للمسح الضوئي.");
+    // Cloudflare و Gemini لديهما حدود للحجم. يفضل ضغط ملفات PDF قبل الرفع.
+    if (file.size > 10 * 1024 * 1024) {
+        toast.error("حجم الملف كبير جداً (أقصى حد 10MB). يرجى تقليل حجم الملف.");
         return;
     }
 
@@ -122,11 +112,11 @@ export default function InboundLetterForm(): React.ReactNode {
         let base64Data: string;
         let mimeType: string;
         
-        if (isTiff) {
+        if (file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff')) {
             const arrayBuffer = await file.arrayBuffer();
             const tiff = new Tiff({ buffer: arrayBuffer });
             const canvas = tiff.toCanvas();
-            if (!canvas) throw new Error("فشل تحويل ملف TIFF");
+            if (!canvas) throw new Error("فشل تحويل TIF");
             const dataUrl = canvas.toDataURL('image/png');
             [, base64Data] = dataUrl.split(',');
             mimeType = 'image/png';
@@ -134,13 +124,13 @@ export default function InboundLetterForm(): React.ReactNode {
             const dataUrl = await fileToDataURL(file);
             const [header, data] = dataUrl.split(',');
             const matchedMime = header.match(/:(.*?);/)?.[1];
-            if (!matchedMime || !data) throw new Error("ملف غير صالح");
+            if (!matchedMime || !data) throw new Error("صيغة غير مدعومة");
             base64Data = data;
             mimeType = matchedMime;
         }
 
         const existingLettersContext = letters.map(l => ({
-            id: l.id, subject: l.subject, internalRefNumber: l.internalRefNumber, externalRefNumber: l.externalRefNumber, date: l.date
+            id: l.id, subject: l.subject, internalRefNumber: l.internalRefNumber, date: l.date
         })).slice(0, 15);
 
         const extractedData = await extractDetailsFromLetterImage(
@@ -154,44 +144,35 @@ export default function InboundLetterForm(): React.ReactNode {
             existingLettersContext
         );
         
-        const updates: Partial<InboundLetterFormState> = {
+        updateState({
+            subject: extractedData.subject || subject,
+            from: extractedData.from || from,
+            to: extractedData.to || to,
+            externalRefNumber: extractedData.externalRefNumber || externalRefNumber,
+            summary: extractedData.summary || summary,
+            referenceId: extractedData.referenceId || referenceId,
+            dateReceived: extractedData.date || dateReceived,
             attachments: [file, ...attachments]
-        };
+        });
 
-        if (extractedData.subject) updates.subject = extractedData.subject;
-        if (extractedData.from) updates.from = extractedData.from;
-        if (extractedData.to) updates.to = extractedData.to; 
-        if (extractedData.externalRefNumber) updates.externalRefNumber = extractedData.externalRefNumber;
-        if (extractedData.summary) updates.summary = extractedData.summary;
-        if (extractedData.referenceId) updates.referenceId = extractedData.referenceId;
-        if (extractedData.date) updates.dateReceived = extractedData.date;
-
-        updateState(updates);
         toast.success("تم استخلاص البيانات بنجاح!", { id: loadingToast });
 
     } catch(error: any) {
         console.error(error);
-        toast.error(`فشل المسح الضوئي: ${error.message || 'خطأ في الاتصال'}`, { id: loadingToast });
+        const errorMsg = error.message.includes("API_KEY_NOT_FOUND_IN_BROWSER") 
+            ? "خطأ في المفتاح: لم يتم العثور على API_KEY في بيئة المتصفح." 
+            : `فشل المسح: ${error.message}`;
+        toast.error(errorMsg, { id: loadingToast, duration: 6000 });
     } finally {
         setIsScanning(false);
         if (e.target) e.target.value = '';
     }
   };
 
-  const removeAttachment = (index: number) => {
-    updateState({ attachments: attachments.filter((_, i) => i !== index) });
-  };
-  
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-        updateState({ attachments: [...attachments, ...Array.from(e.target.files)] });
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!subject.trim() || !from.trim() || !to.trim() || attachments.length === 0) {
-      toast.error('الرجاء تعبئة الحقول الإلزامية وإرفاق ملف واحد على الأقل.');
+      toast.error('الرجاء تعبئة الحقول الإلزامية وإرفاق الملف.');
       return;
     }
 
@@ -219,49 +200,26 @@ export default function InboundLetterForm(): React.ReactNode {
   };
 
   return (
-    <div className="max-w-4xl mx-auto">
-      <div className="flex justify-between items-center mb-1">
-        <h2 className="text-2xl font-bold text-white">تسجيل خطاب وارد جديد</h2>
-        <button onClick={() => dispatch({ type: 'RESET_INBOUND_FORM_STATE' })} className="btn-3d-secondary px-3 py-1.5 text-sm text-rose-300 font-bold border border-rose-500/30 hover:bg-rose-500/20">مسح النموذج</button>
+    <div className="max-w-4xl mx-auto pb-10">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-3xl font-black text-white">تسجيل خطاب وارد جديد</h2>
+        <button onClick={() => dispatch({ type: 'RESET_INBOUND_FORM_STATE' })} className="btn-3d-secondary px-4 py-2 text-xs font-bold text-rose-400">مسح النموذج</button>
       </div>
-      <p className="text-slate-400 font-bold mb-6">حوّل الخطابات الورقية إلى بيانات رقمية فوراً عبر المسح الضوئي.</p>
       
-      <div className="bg-slate-900/60 backdrop-blur-md p-6 rounded-lg shadow-lg border border-white/10">
-        <div className="flex justify-center mb-6">
+      <div className="glass-card p-8 space-y-8 rounded-[2rem] border-white/10 shadow-3xl">
+        <div className="flex justify-center">
             <button
                 onClick={() => aiScanInputRef.current?.click()}
                 disabled={isScanning}
-                className={`w-full md:w-auto inline-flex items-center justify-center gap-3 px-8 py-4 text-white rounded-lg shadow-lg transition-all ${isScanning ? 'bg-slate-500 cursor-wait' : theme.bg + ' hover:brightness-110'}`}
+                className={`w-full md:w-auto px-10 py-5 rounded-2xl font-black text-white flex items-center gap-3 transition-all ${isScanning ? 'bg-slate-700' : theme.bg + ' hover:brightness-110'}`}
             >
-                 {isScanning ? (
-                    <><div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div><span className="font-bold">جاري القراءة...</span></>
-                 ) : (
-                    <span className="text-lg font-bold">المسح الضوئي الذكي (OCR)</span>
-                 )}
+                 {isScanning ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> : null}
+                 <span>{isScanning ? 'جاري التحليل...' : 'مسح ملف الخطاب (AI)'}</span>
             </button>
             <input type="file" accept="application/pdf,image/*" ref={aiScanInputRef} onChange={handleAiScan} className="hidden" />
         </div>
-        
-        {summary && (
-             <div className="my-6 p-4 bg-indigo-900/20 border-r-4 border-indigo-500 rounded-md animate-in fade-in slide-in-from-right-2">
-                <h3 className="text-sm font-bold text-indigo-400 mb-1">ملخص الذكاء الاصطناعي</h3>
-                <p className="text-sm font-semibold text-slate-100 leading-relaxed">{summary}</p>
-            </div>
-        )}
-        
-        <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="bg-indigo-900/10 border border-indigo-500/20 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-sm font-bold text-indigo-300 flex items-center gap-2"><LinkIcon className="w-4 h-4" /> ربط بمعاملة سابقة</h3>
-                    {selectedParentLetter && <button type="button" onClick={() => updateState({ referenceId: undefined })} className="text-xs text-rose-400 underline font-bold">إلغاء الربط</button>}
-                </div>
-                {selectedParentLetter ? (
-                    <div className="bg-indigo-500/20 p-3 rounded border border-indigo-500/30 text-sm font-bold text-white">مرتبط بـ: {selectedParentLetter.subject}</div>
-                ) : (
-                    <input type="text" value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setIsSearchOpen(true); }} placeholder="ابحث برقم المعاملة أو الموضوع للربط..." className="w-full px-4 py-2 bg-slate-950/50 text-white border border-slate-700/50 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
-                )}
-            </div>
 
+        <form onSubmit={handleSubmit} className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <InputField label="الموضوع" value={subject} onChange={(e) => updateState({ subject: e.target.value })} ringColor={theme.ring} required />
                 <InputField label="جهة الورود" value={from} onChange={(e) => updateState({ from: e.target.value })} ringColor={theme.ring} required/>
@@ -270,10 +228,7 @@ export default function InboundLetterForm(): React.ReactNode {
                 <InputField label="رقم الصادر الخارجي" value={externalRefNumber} onChange={(e) => updateState({ externalRefNumber: e.target.value })} ringColor={theme.ring} />
                 <SelectField label="نوع الخطاب" value={letterType} onChange={(e) => updateState({ letterType: e.target.value as LetterType })} options={LetterType} ringColor={theme.ring} />
             </div>
-
-            <div className="pt-4 text-center">
-                <button type="submit" disabled={isScanning} className="w-full md:w-auto px-12 py-3 text-white bg-emerald-600 rounded-md hover:bg-emerald-700 font-bold shadow-lg disabled:opacity-50">إتمام التسجيل</button>
-            </div>
+            <button type="submit" disabled={isScanning} className="w-full py-5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xl rounded-2xl shadow-3xl transition-all disabled:opacity-50">إتمام التسجيل</button>
         </form>
       </div>
     </div>
