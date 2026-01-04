@@ -4,12 +4,10 @@ import { Letter, ExtractedLetterDetails, EnhancementSuggestion, FollowUpItem, Sm
 
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-// قاعدة لغوية قطعية لمنع تقطيع الحروف العربية في كافة المخرجات
 const ARABIC_STRICT_CONNECTED_SCRIPT = `
-قاعدة لغوية صارمة جداً (Linguistic Enforcement):
+قاعدة لغوية صارمة جداً:
 يجب أن تكون جميع النصوص العربية بكلمات متصلة وطبيعية تماماً. 
 يُمنع منعاً باتاً فصل الحروف (مثال: اكتب "خطاب" وليس "خ ط ا ب"). 
-استخدم الخط العربي المتصل القياسي فقط. أي مخرج بحروف مقطعة سيعتبر خطأ برمجياً جسيماً.
 `;
 
 export async function extractDetailsFromLetterImage(
@@ -24,33 +22,28 @@ export async function extractDetailsFromLetterImage(
 ): Promise<ExtractedLetterDetails> {
   const ai = getAI();
   
-  // نرسل فقط آخر 20 خطاباً لتقليل حجم الطلب وتجنب قيود الشبكة في Cloudflare
-  const recentLetters = existingLetters.slice(0, 20);
+  // تقليل السياق لأقصى حد لضمان عبور الطلب من Cloudflare
+  const recentLetters = existingLetters.slice(0, 10);
   const lettersContext = recentLetters.length > 0 
-    ? `**سياق الأرشيف الأخير للمطابقة:**\n` + recentLetters.map(l => 
-        `- ID: "${l.id}", Ref: "${l.internalRefNumber || ''}", ExtRef: "${l.externalRefNumber || ''}", Subject: "${l.subject}"`
+    ? `الأرشيف الحديث للمطابقة:\n` + recentLetters.map(l => 
+        `- ID: "${l.id}", Ref: "${l.internalRefNumber || ''}", Subject: "${l.subject}"`
       ).join('\n')
-    : "لا توجد سجلات سابقة للمطابقة.";
+    : "";
 
-  const systemInstruction = `أنت خبير OCR وإدارة وثائق حكومية محترف. مهمتك هي تحليل صورة المستند واستخراج البيانات بدقة متناهية.
+  const systemInstruction = `أنت مساعد إداري خبير في تصنيف الخطابات الرسمية واستخراج البيانات.
   ${ARABIC_STRICT_CONNECTED_SCRIPT}
+  المهمة: حلل المستند المرفق (صورة أو PDF) واستخرج البيانات بصيغة JSON.
   
-  **التعليمات التقنية:**
-  1. استخرج الحقول المطلوبة بصيغة JSON فقط.
-  2. إذا وجد رقم إشارة أو تاريخ لخطاب سابق في المتن، حاول مطابقته مع السياق المقدم وتحديد الـ referenceId.
-  3. تأكد من أن التاريخ المستخرج بصيغة YYYY-MM-DD.
-  4. لخص "المحتوى" في جملة واحدة احترافية تحت حقل summary.
-
-  **السياق المتوفر:**
+  السياق:
   ${lettersContext}`;
 
   try {
       const response = await ai.models.generateContent({
-        model: "gemini-3-pro-preview", // استخدام Pro لمهام OCR المعقدة
+        model: "gemini-3-flash-preview", // Flash أكثر استقراراً لملفات PDF الكبيرة في الإنتاج
         contents: {
             parts: [
-                { text: `حلل هذه الصورة واستخرج البيانات كـ JSON مع الالتزام بقواعد اللغة العربية المتصلة.` },
-                { inlineData: { mimeType, data: base64Image } }
+                { text: `استخرج الحقول التالية من المستند المرفق بصيغة JSON: subject, from, to, date (YYYY-MM-DD), externalRefNumber, summary, category, priority, confidentiality, referenceId (إذا وجد تطابق).` },
+                { inlineData: { mimeType, data: base64Image.replace(/\s/g, '') } }
             ]
         },
         config: {
@@ -59,28 +52,29 @@ export async function extractDetailsFromLetterImage(
             responseSchema: {
                 type: Type.OBJECT,
                 properties: {
-                    subject: { type: Type.STRING, description: "موضوع الخطاب" },
-                    from: { type: Type.STRING, description: "جهة الإرسال" },
-                    to: { type: Type.STRING, description: "جهة الاستلام أو القسم الموجه له" },
-                    date: { type: Type.STRING, description: "تاريخ الخطاب YYYY-MM-DD" },
-                    externalRefNumber: { type: Type.STRING, description: "رقم الصادر المسجل على الورقة" },
-                    summary: { type: Type.STRING, description: "ملخص قصير جداً للإجراء المطلوب" },
-                    category: { type: Type.STRING, description: "تصنيف مقترح (مثال: مالي، إداري، فني)" },
-                    priority: { type: Type.STRING, enum: priorityLevels },
-                    confidentiality: { type: Type.STRING, enum: confidentialityLevels },
-                    referenceId: { type: Type.STRING, description: "معرف الخطاب المرتبط من السياق" },
-                    referencedNumber: { type: Type.STRING, description: "رقم الخطاب المشار إليه في النص" }
+                    subject: { type: Type.STRING },
+                    from: { type: Type.STRING },
+                    to: { type: Type.STRING },
+                    date: { type: Type.STRING },
+                    externalRefNumber: { type: Type.STRING },
+                    summary: { type: Type.STRING },
+                    category: { type: Type.STRING },
+                    priority: { type: Type.STRING },
+                    confidentiality: { type: Type.STRING },
+                    referenceId: { type: Type.STRING },
+                    referencedNumber: { type: Type.STRING }
                 },
-                required: ["subject", "from", "to", "summary"]
+                required: ["subject", "from", "to"]
             }
         }
       });
 
-      if (!response.text) throw new Error("Empty response from AI");
-      return JSON.parse(response.text.trim()) as ExtractedLetterDetails;
-  } catch (error) {
-      console.error("OCR Service Error:", error);
-      throw error;
+      const text = response.text;
+      if (!text) throw new Error("لم يتم استلام رد من الذكاء الاصطناعي");
+      return JSON.parse(text.trim()) as ExtractedLetterDetails;
+  } catch (error: any) {
+      console.error("Gemini OCR Error:", error);
+      throw new Error(error.message || "فشل تحليل المستند");
   }
 }
 
@@ -90,10 +84,9 @@ export async function generateSmartReplies(letter: Letter): Promise<SmartReply[]
     
     const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: `اقترح 3 مسارات استراتيجية ذكية للرد على هذا الخطاب (الموضوع: ${letter.subject}). 
-        المحتوى: ${content}.`,
+        contents: `اقترح 3 مسارات للرد على: ${letter.subject}. المحتوى: ${content}`,
         config: {
-            systemInstruction: `أنت مستشار إداري خبير. اقترح مسارات رد مهنية متنوعة. ${ARABIC_STRICT_CONNECTED_SCRIPT}`,
+            systemInstruction: `أنت مستشار إداري. ${ARABIC_STRICT_CONNECTED_SCRIPT}`,
             responseMimeType: "application/json",
             responseSchema: {
                 type: Type.ARRAY,
@@ -102,7 +95,7 @@ export async function generateSmartReplies(letter: Letter): Promise<SmartReply[]
                     properties: {
                         title: { type: Type.STRING },
                         objective: { type: Type.STRING },
-                        tone: { type: Type.STRING, enum: ["رسمية صارمة", "محايدة", "دبلوماسية", "تعاونية"] },
+                        tone: { type: Type.STRING },
                         type: { type: Type.STRING, enum: ["positive", "negative", "neutral", "inquiry"] }
                     },
                     required: ["title", "objective", "tone", "type"]
@@ -118,7 +111,7 @@ export async function enhanceLetter(text: string): Promise<EnhancementSuggestion
     const ai = getAI();
     const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: `راجع النص التالي وقدم اقتراحات لتحسين صياغته الإدارية:\n\n${text}`,
+        contents: `حسن الصياغة الإدارية للنص التالي:\n\n${text}`,
         config: {
             systemInstruction: `أنت مدقق لغوي إداري. ${ARABIC_STRICT_CONNECTED_SCRIPT}`,
             responseMimeType: "application/json",
@@ -141,12 +134,12 @@ export async function enhanceLetter(text: string): Promise<EnhancementSuggestion
 
 export async function summarizeCorrespondenceThread(thread: Letter[]): Promise<string> {
     const ai = getAI();
-    const threadText = thread.map(l => `${l.from} -> ${l.to}: ${l.subject}\n${l.body.replace(/<[^>]*>?/gm, ' ')}`).join('\n---\n');
+    const threadText = thread.map(l => `${l.from} -> ${l.to}: ${l.subject}`).join('\n');
 
     const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: `لخص هذه السلسلة في فقرة واحدة مركزة:\n\n${threadText}`,
-        config: { systemInstruction: `أنت خبير تلخيص معاملات. ${ARABIC_STRICT_CONNECTED_SCRIPT}`, temperature: 0.2 }
+        contents: `لخص هذه السلسلة:\n\n${threadText}`,
+        config: { systemInstruction: `أنت خبير تلخيص. ${ARABIC_STRICT_CONNECTED_SCRIPT}` }
     });
     return response.text || "";
 }
@@ -156,9 +149,9 @@ export async function getFollowUpSummary(letters: Letter[]): Promise<FollowUpIte
     const summaries = letters.map(l => ({ id: l.id, subject: l.subject }));
     const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: `حلل القائمة وحدد المعاملات التي تحتاج متابعة عاجلة:\n\n${JSON.stringify(summaries)}`,
+        contents: `حلل المعاملات التي تحتاج متابعة:\n\n${JSON.stringify(summaries)}`,
         config: {
-            systemInstruction: `أنت مساعد متابعة إداري. ${ARABIC_STRICT_CONNECTED_SCRIPT}`,
+            systemInstruction: `أنت مساعد متابعة. ${ARABIC_STRICT_CONNECTED_SCRIPT}`,
             responseMimeType: "application/json",
             responseSchema: {
                 type: Type.ARRAY,
@@ -181,7 +174,7 @@ export async function searchLettersSmartly(query: string, letters: Letter[]): Pr
     
     const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: `ابحث سياقياً عن "${query}" في قائمة المعاملات التالية وقيم مدى الارتباط:\n\n${JSON.stringify(list)}`,
+        contents: `ابحث عن "${query}" في:\n\n${JSON.stringify(list)}`,
         config: {
             systemInstruction: `أنت خبير بحث سياقي. ${ARABIC_STRICT_CONNECTED_SCRIPT}`,
             responseMimeType: "application/json",
