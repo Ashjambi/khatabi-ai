@@ -73,40 +73,26 @@ export default function InboundLetterForm(): React.ReactNode {
   } = inboundLetterFormState;
 
   const [isScanning, setIsScanning] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
-
   const theme = getThemeClasses(settings.primaryColor);
   const aiScanInputRef = useRef<HTMLInputElement>(null);
-  const allRecipients = [...settings.departments, ...(settings.externalEntities || [])];
 
   const updateState = (payload: Partial<InboundLetterFormState>) => {
       dispatch({ type: 'UPDATE_INBOUND_FORM_STATE', payload });
   };
 
-  const filteredLetters = useMemo(() => {
-      if (!searchTerm) return [];
-      const lower = searchTerm.toLowerCase();
-      return letters.filter(l => 
-          l.subject.toLowerCase().includes(lower) || 
-          (l.internalRefNumber || '').toLowerCase().includes(lower)
-      ).slice(0, 5);
-  }, [searchTerm, letters]);
-
-  const selectedParentLetter = useMemo(() => letters.find(l => l.id === referenceId), [letters, referenceId]);
-
   const handleAiScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Cloudflare و Gemini لديهما حدود للحجم. يفضل ضغط ملفات PDF قبل الرفع.
-    if (file.size > 10 * 1024 * 1024) {
-        toast.error("حجم الملف كبير جداً (أقصى حد 10MB). يرجى تقليل حجم الملف.");
+    // تحديد الحد الأقصى للملف بـ 4MB لتجنب قيود السحابة
+    if (file.size > 4 * 1024 * 1024) {
+        toast.error("حجم الملف كبير جداً للمسح الذكي (الحد الأقصى 4MB). يرجى ضغط الملف أو رفعه كصورة.");
+        if (e.target) e.target.value = '';
         return;
     }
 
     setIsScanning(true);
-    const loadingToast = toast.loading("جاري تحليل الخطاب رقمياً...");
+    const loadingToast = toast.loading("جاري قراءة الخطاب وتحليل البيانات...");
     
     try {
         let base64Data: string;
@@ -116,32 +102,22 @@ export default function InboundLetterForm(): React.ReactNode {
             const arrayBuffer = await file.arrayBuffer();
             const tiff = new Tiff({ buffer: arrayBuffer });
             const canvas = tiff.toCanvas();
-            if (!canvas) throw new Error("فشل تحويل TIF");
-            const dataUrl = canvas.toDataURL('image/png');
-            [, base64Data] = dataUrl.split(',');
+            if (!canvas) throw new Error("فشل تحويل الملف");
+            base64Data = canvas.toDataURL('image/png').split(',')[1];
             mimeType = 'image/png';
         } else {
             const dataUrl = await fileToDataURL(file);
             const [header, data] = dataUrl.split(',');
-            const matchedMime = header.match(/:(.*?);/)?.[1];
-            if (!matchedMime || !data) throw new Error("صيغة غير مدعومة");
             base64Data = data;
-            mimeType = matchedMime;
+            mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
         }
 
-        const existingLettersContext = letters.map(l => ({
-            id: l.id, subject: l.subject, internalRefNumber: l.internalRefNumber, date: l.date
-        })).slice(0, 15);
+        const context = letters.map(l => ({ id: l.id, subject: l.subject, internalRefNumber: l.internalRefNumber, date: l.date })).slice(0, 15);
 
         const extractedData = await extractDetailsFromLetterImage(
-            base64Data, 
-            mimeType, 
-            settings.departments, 
-            Object.values(LetterType), 
-            Object.values(PriorityLevel), 
-            Object.values(ConfidentialityLevel), 
-            [], 
-            existingLettersContext
+            base64Data, mimeType, settings.departments, 
+            Object.values(LetterType), Object.values(PriorityLevel), 
+            Object.values(ConfidentialityLevel), [], context
         );
         
         updateState({
@@ -158,11 +134,7 @@ export default function InboundLetterForm(): React.ReactNode {
         toast.success("تم استخلاص البيانات بنجاح!", { id: loadingToast });
 
     } catch(error: any) {
-        console.error(error);
-        const errorMsg = error.message.includes("API_KEY_NOT_FOUND_IN_BROWSER") 
-            ? "خطأ في المفتاح: لم يتم العثور على API_KEY في بيئة المتصفح." 
-            : `فشل المسح: ${error.message}`;
-        toast.error(errorMsg, { id: loadingToast, duration: 6000 });
+        toast.error(error.message, { id: loadingToast, duration: 6000 });
     } finally {
         setIsScanning(false);
         if (e.target) e.target.value = '';
@@ -172,7 +144,7 @@ export default function InboundLetterForm(): React.ReactNode {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!subject.trim() || !from.trim() || !to.trim() || attachments.length === 0) {
-      toast.error('الرجاء تعبئة الحقول الإلزامية وإرفاق الملف.');
+      toast.error('الحقول الأساسية والملف المرفق مطلوبة.');
       return;
     }
 
@@ -208,13 +180,9 @@ export default function InboundLetterForm(): React.ReactNode {
       
       <div className="glass-card p-8 space-y-8 rounded-[2rem] border-white/10 shadow-3xl">
         <div className="flex justify-center">
-            <button
-                onClick={() => aiScanInputRef.current?.click()}
-                disabled={isScanning}
-                className={`w-full md:w-auto px-10 py-5 rounded-2xl font-black text-white flex items-center gap-3 transition-all ${isScanning ? 'bg-slate-700' : theme.bg + ' hover:brightness-110'}`}
-            >
-                 {isScanning ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> : null}
-                 <span>{isScanning ? 'جاري التحليل...' : 'مسح ملف الخطاب (AI)'}</span>
+            <button onClick={() => aiScanInputRef.current?.click()} disabled={isScanning} className={`w-full md:w-auto px-10 py-5 rounded-2xl font-black text-white flex items-center gap-3 transition-all ${isScanning ? 'bg-slate-700' : theme.bg + ' hover:brightness-110'}`}>
+                 {isScanning ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> : <LinkIcon className="w-6 h-6 rotate-45" />}
+                 <span>{isScanning ? 'جاري التحليل...' : 'تحليل ملف الخطاب (AI)'}</span>
             </button>
             <input type="file" accept="application/pdf,image/*" ref={aiScanInputRef} onChange={handleAiScan} className="hidden" />
         </div>
@@ -225,10 +193,8 @@ export default function InboundLetterForm(): React.ReactNode {
                 <InputField label="جهة الورود" value={from} onChange={(e) => updateState({ from: e.target.value })} ringColor={theme.ring} required/>
                 <InputField label="توجيه إلى" value={to} onChange={(e) => updateState({ to: e.target.value })} ringColor={theme.ring} required />
                 <InputField label="تاريخ المستند" value={dateReceived} onChange={(e) => updateState({ dateReceived: e.target.value })} type="date" ringColor={theme.ring} />
-                <InputField label="رقم الصادر الخارجي" value={externalRefNumber} onChange={(e) => updateState({ externalRefNumber: e.target.value })} ringColor={theme.ring} />
-                <SelectField label="نوع الخطاب" value={letterType} onChange={(e) => updateState({ letterType: e.target.value as LetterType })} options={LetterType} ringColor={theme.ring} />
             </div>
-            <button type="submit" disabled={isScanning} className="w-full py-5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xl rounded-2xl shadow-3xl transition-all disabled:opacity-50">إتمام التسجيل</button>
+            <button type="submit" disabled={isScanning} className="w-full py-5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xl rounded-2xl shadow-3xl transition-all">إتمام التسجيل والحفظ</button>
         </form>
       </div>
     </div>

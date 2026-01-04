@@ -1,17 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { Letter, ExtractedLetterDetails, EnhancementSuggestion, FollowUpItem, SmartReply, Tone, SmartSearchResult } from "../types";
-
-/**
- * وظيفة للتحقق من المفتاح وتوفير رسالة خطأ واضحة
- */
-const getApiKey = () => {
-    const key = process.env.API_KEY;
-    if (!key || key === "undefined" || key === "") {
-        throw new Error("API_KEY_NOT_FOUND_IN_BROWSER");
-    }
-    return key;
-};
+import { Letter, ExtractedLetterDetails, EnhancementSuggestion, FollowUpItem, SmartReply, Tone } from "../types";
 
 const ARABIC_STRICT_CONNECTED_SCRIPT = `
 قاعدة لغوية صارمة: يجب أن تكون النصوص العربية بكلمات متصلة تماماً (مثل "خطاب" وليس "خ ط ا ب").
@@ -27,26 +16,26 @@ export async function extractDetailsFromLetterImage(
   existingCategories: string[],
   existingLetters: { id: string, subject: string, internalRefNumber?: string, externalRefNumber?: string, date: string }[]
 ): Promise<ExtractedLetterDetails> {
+  // تهيئة مباشرة لضمان الحصول على المفتاح من البيئة
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  
+  const recentLetters = existingLetters.slice(0, 10);
+  const lettersContext = recentLetters.length > 0 
+    ? `الأرشيف الحديث للمطابقة:\n` + recentLetters.map(l => 
+        `- ID: "${l.id}", Ref: "${l.internalRefNumber || ''}", Subject: "${l.subject}"`
+      ).join('\n')
+    : "";
+
+  const systemInstruction = `أنت مساعد إداري خبير. ${ARABIC_STRICT_CONNECTED_SCRIPT}
+  حلل المستند واستخرج البيانات كـ JSON.
+  السياق: ${lettersContext}`;
+
   try {
-      // تهيئة جديدة عند كل استدعاء لضمان الحصول على أحدث مفتاح من البيئة
-      const ai = new GoogleGenAI({ apiKey: getApiKey() });
-      
-      const recentLetters = existingLetters.slice(0, 10);
-      const lettersContext = recentLetters.length > 0 
-        ? `الأرشيف الحديث للمطابقة:\n` + recentLetters.map(l => 
-            `- ID: "${l.id}", Ref: "${l.internalRefNumber || ''}", Subject: "${l.subject}"`
-          ).join('\n')
-        : "";
-
-      const systemInstruction = `أنت خبير OCR إداري. ${ARABIC_STRICT_CONNECTED_SCRIPT}
-      حلل المستند واستخرج البيانات كـ JSON.
-      السياق: ${lettersContext}`;
-
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: {
             parts: [
-                { text: `استخرج الحقول (subject, from, to, date, externalRefNumber, summary) بصيغة JSON.` },
+                { text: `استخرج الحقول (subject, from, to, date, externalRefNumber, summary) بصيغة JSON من المرفق.` },
                 { inlineData: { mimeType, data: base64Image.replace(/\s/g, '') } }
             ]
         },
@@ -63,8 +52,6 @@ export async function extractDetailsFromLetterImage(
                     externalRefNumber: { type: Type.STRING },
                     summary: { type: Type.STRING },
                     category: { type: Type.STRING },
-                    priority: { type: Type.STRING },
-                    confidentiality: { type: Type.STRING },
                     referenceId: { type: Type.STRING }
                 },
                 required: ["subject", "from", "to"]
@@ -73,21 +60,17 @@ export async function extractDetailsFromLetterImage(
       });
 
       const text = response.text;
-      if (!text) throw new Error("لم يصل رد من الذكاء الاصطناعي");
+      if (!text) throw new Error("لم يتم استلام رد");
       return JSON.parse(text.trim()) as ExtractedLetterDetails;
-
   } catch (error: any) {
-      if (error.message === "API_KEY_NOT_FOUND_IN_BROWSER") {
-          throw new Error("لم يتم حقن مفتاح API في المتصفح. تأكد من إضافة API_KEY في متغيرات Build في Cloudflare وليس فقط Variables.");
-      }
-      console.error("Gemini OCR Error:", error);
-      throw error;
+      console.error("Gemini Error:", error);
+      throw new Error("تعذر تحليل المستند. تأكد من جودة الصورة ومن حقن مفتاح API_KEY في إعدادات البناء.");
   }
 }
 
 export async function generateSmartReplies(letter: Letter): Promise<SmartReply[]> {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     try {
-        const ai = new GoogleGenAI({ apiKey: getApiKey() });
         const content = letter.summary || letter.body.replace(/<[^>]*>?/gm, ' ');
         const response = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
@@ -117,25 +100,14 @@ export async function generateSmartReplies(letter: Letter): Promise<SmartReply[]
 }
 
 export async function enhanceLetter(text: string): Promise<EnhancementSuggestion[]> {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     try {
-        const ai = new GoogleGenAI({ apiKey: getApiKey() });
         const response = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
             contents: `حسن الصياغة الإدارية للنص التالي:\n\n${text}`,
             config: {
-                systemInstruction: `أنت مدقق لغوي إداري. ${ARABIC_STRICT_CONNECTED_SCRIPT}`,
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            original_part: { type: Type.STRING },
-                            suggested_improvement: { type: Type.STRING },
-                            reason: { type: Type.STRING }
-                        }
-                    }
-                }
+                systemInstruction: `أنت مدقق لغوي إداري خبير. ${ARABIC_STRICT_CONNECTED_SCRIPT}`,
+                responseMimeType: "application/json"
             }
         });
         return JSON.parse(response.text || "[]");
@@ -145,13 +117,13 @@ export async function enhanceLetter(text: string): Promise<EnhancementSuggestion
 }
 
 export async function summarizeCorrespondenceThread(thread: Letter[]): Promise<string> {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     try {
-        const ai = new GoogleGenAI({ apiKey: getApiKey() });
         const threadText = thread.map(l => `${l.from} -> ${l.to}: ${l.subject}`).join('\n');
         const response = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
             contents: `لخص هذه السلسلة:\n\n${threadText}`,
-            config: { systemInstruction: `أنت خبير تلخيص. ${ARABIC_STRICT_CONNECTED_SCRIPT}` }
+            config: { systemInstruction: `أنت خبير تلخيص إداري. ${ARABIC_STRICT_CONNECTED_SCRIPT}` }
         });
         return response.text || "";
     } catch (e) {
@@ -160,25 +132,15 @@ export async function summarizeCorrespondenceThread(thread: Letter[]): Promise<s
 }
 
 export async function getFollowUpSummary(letters: Letter[]): Promise<FollowUpItem[]> {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     try {
-        const ai = new GoogleGenAI({ apiKey: getApiKey() });
         const summaries = letters.map(l => ({ id: l.id, subject: l.subject }));
         const response = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
             contents: `حلل المعاملات التي تحتاج متابعة:\n\n${JSON.stringify(summaries)}`,
             config: {
-                systemInstruction: `أنت مساعد متابعة. ${ARABIC_STRICT_CONNECTED_SCRIPT}`,
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            letterId: { type: Type.STRING },
-                            summary: { type: Type.STRING }
-                        }
-                    }
-                }
+                systemInstruction: `أنت مساعد متابعة معاملات. ${ARABIC_STRICT_CONNECTED_SCRIPT}`,
+                responseMimeType: "application/json"
             }
         });
         return JSON.parse(response.text || "[]");
@@ -187,27 +149,16 @@ export async function getFollowUpSummary(letters: Letter[]): Promise<FollowUpIte
     }
 }
 
-export async function searchLettersSmartly(query: string, letters: Letter[]): Promise<SmartSearchResult[]> {
+export async function searchLettersSmartly(query: string, letters: Letter[]): Promise<any[]> {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     try {
-        const ai = new GoogleGenAI({ apiKey: getApiKey() });
         const list = letters.map(l => ({ id: l.id, subject: l.subject }));
         const response = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
             contents: `ابحث عن "${query}" في:\n\n${JSON.stringify(list)}`,
             config: {
                 systemInstruction: `أنت خبير بحث سياقي. ${ARABIC_STRICT_CONNECTED_SCRIPT}`,
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            letterId: { type: Type.STRING },
-                            relevanceReason: { type: Type.STRING },
-                            confidenceScore: { type: Type.NUMBER }
-                        }
-                    }
-                }
+                responseMimeType: "application/json"
             }
         });
         return JSON.parse(response.text || "[]");

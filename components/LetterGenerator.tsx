@@ -14,11 +14,6 @@ interface LetterAnalysis {
     strategic_feedback: string[];
 }
 
-interface ChatMessage {
-    role: 'user' | 'model';
-    text: string;
-}
-
 export default function LetterGenerator() {
     const { state, dispatch } = useApp();
     const { generatorState, learnedPrinciples, companySettings, letters } = state;
@@ -36,12 +31,6 @@ export default function LetterGenerator() {
     const [finalBody, setFinalBody] = useState('');
     const [objectiveText, setObjectiveText] = useState(objective || '');
     const [isContextCollapsed, setIsContextCollapsed] = useState(false);
-
-    // AI Chat State
-    const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
-    const [chatInput, setChatInput] = useState('');
-    const [isChatLoading, setIsChatLoading] = useState(false);
-    const chatEndRef = useRef<HTMLDivElement>(null);
 
     const parentLetter = useMemo(() => letters.find(l => l.id === referenceId), [letters, referenceId]);
     const isReplyMode = !!referenceId;
@@ -67,10 +56,6 @@ export default function LetterGenerator() {
         if (objective) setObjectiveText(objective); 
     }, [objective]);
 
-    useEffect(() => {
-        chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [chatHistory]);
-
     const updateState = (payload: Partial<GeneratorState>) => {
         dispatch({ type: 'UPDATE_GENERATOR_STATE', payload });
     };
@@ -81,15 +66,10 @@ export default function LetterGenerator() {
             return;
         }
 
-        const apiKey = process.env.API_KEY;
-        if (!apiKey || apiKey === "undefined") {
-            toast.error("مفتاح API غير متوفر. تأكد من ضبطه في إعدادات Cloudflare.");
-            return;
-        }
-
         setIsLoading(true);
         try {
-            const ai = new GoogleGenAI({ apiKey });
+            // إنشاء كائن AI مباشرة قبل الاستخدام
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
             
             const systemInstruction = `أنت خبير الصياغة الإدارية. 
             قاعدة لغوية قطعية: يجب أن تكون جميع النصوص العربية بكلمات متصلة وطبيعية. 
@@ -122,60 +102,9 @@ export default function LetterGenerator() {
             setGeneratedContent(JSON.parse(response.text || "{}"));
             setStep(1);
         } catch (e) {
-            toast.error("فشلت الصياغة الذكية. يرجى التحقق من إعدادات الوصول.");
+            toast.error("فشلت الصياغة الذكية. تأكد من صحة مفتاح API في إعدادات Cloudflare.");
         } finally {
             setIsLoading(false);
-        }
-    };
-
-    const handleChatSubmit = async (e?: React.FormEvent) => {
-        if (e) e.preventDefault();
-        if (!chatInput.trim() || isChatLoading) return;
-
-        const apiKey = process.env.API_KEY;
-        if (!apiKey || apiKey === "undefined") {
-            toast.error("مفتاح API مفقود.");
-            return;
-        }
-
-        const userMessage = chatInput;
-        setChatInput('');
-        setChatHistory(prev => [...prev, { role: 'user', text: userMessage }]);
-        setIsChatLoading(true);
-
-        try {
-            const ai = new GoogleGenAI({ apiKey });
-            const response = await ai.models.generateContent({
-                model: "gemini-3-flash-preview",
-                contents: {
-                    parts: [{
-                        text: `النص الحالي: \n${finalBody}\n\nطلب التعديل: ${userMessage}\n\nأعد النص المحدث بصيغة HTML في JSON.`
-                    }]
-                } as any,
-                config: {
-                    systemInstruction: "أنت مساعد صياغة إداري. أعد JSON يحتوي على (updated_body) و (ai_comment).",
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                            updated_body: { type: Type.STRING },
-                            ai_comment: { type: Type.STRING }
-                        },
-                        required: ["updated_body", "ai_comment"]
-                    }
-                }
-            });
-
-            const result = JSON.parse(response.text || "{}");
-            if (result.updated_body) {
-                setFinalBody(result.updated_body);
-                setChatHistory(prev => [...prev, { role: 'model', text: result.ai_comment }]);
-                toast.success("تم التحديث.");
-            }
-        } catch (error) {
-            toast.error("فشل التعديل الذكي.");
-        } finally {
-            setIsChatLoading(false);
         }
     };
 
@@ -376,80 +305,10 @@ export default function LetterGenerator() {
                                     <div className="w-1 h-5 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
                                     <h3 className="text-lg font-black text-white uppercase tracking-tight">المراجعة النهائية والتوزيع</h3>
                                 </div>
-                                <div className="flex items-center gap-2 bg-indigo-500/10 px-3 py-1.5 rounded-full border border-indigo-500/20">
-                                    <SparklesIcon className="w-4 h-4 text-indigo-400" />
-                                    <span className="text-xs font-black text-indigo-300">مساعد التعديل التفاعلي متاح</span>
-                                </div>
                              </div>
 
-                             <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-                                <div className="xl:col-span-8 shadow-3xl rounded-3xl overflow-hidden border border-white/5 h-fit">
-                                    <RichTextEditor value={finalBody} onChange={setFinalBody} ringColor={theme.ring} minHeight="min-h-[650px]" />
-                                </div>
-
-                                <div className="xl:col-span-4 flex flex-col bg-slate-900/60 rounded-3xl border border-white/10 shadow-2xl overflow-hidden max-h-[750px]">
-                                    <div className="p-4 bg-white/5 border-b border-white/10 flex items-center gap-3">
-                                        <div className="p-2 bg-indigo-500/20 rounded-lg"><BotIcon className="w-5 h-5 text-indigo-400" /></div>
-                                        <div>
-                                            <h4 className="text-sm font-black text-white">دردشة التعديل الذكي</h4>
-                                            <p className="text-[10px] text-slate-500 font-bold">أرسل ملاحظاتك ليقوم AI بتعديل النص</p>
-                                        </div>
-                                    </div>
-
-                                    <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar min-h-[300px]">
-                                        {chatHistory.length === 0 ? (
-                                            <div className="h-full flex flex-col items-center justify-center text-center p-6 opacity-40">
-                                                <MessageSquareIcon className="w-12 h-12 mb-4 text-slate-500" />
-                                                <p className="text-xs font-bold text-slate-400 leading-relaxed">
-                                                    "اجعل الخطاب أكثر إيجازاً"<br/>
-                                                    "أضف فقرة تطلب موعداً للاجتماع"
-                                                </p>
-                                            </div>
-                                        ) : (
-                                            chatHistory.map((msg, idx) => (
-                                                <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                                    <div className={`max-w-[85%] p-3 rounded-2xl text-[12px] font-bold leading-relaxed shadow-lg ${
-                                                        msg.role === 'user' 
-                                                            ? 'bg-indigo-600 text-white rounded-br-none' 
-                                                            : 'bg-slate-800 text-slate-200 border border-white/5 rounded-bl-none'
-                                                    }`}>
-                                                        {msg.text}
-                                                    </div>
-                                                </div>
-                                            ))
-                                        )}
-                                        {isChatLoading && (
-                                            <div className="flex justify-start">
-                                                <div className="bg-slate-800 p-3 rounded-2xl rounded-bl-none border border-white/5 flex items-center gap-2">
-                                                    <div className="flex gap-1">
-                                                        <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce"></div>
-                                                        <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:0.2s]"></div>
-                                                        <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:0.4s]"></div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-                                        <div ref={chatEndRef} />
-                                    </div>
-
-                                    <form onSubmit={handleChatSubmit} className="p-4 bg-white/5 border-t border-white/10 flex items-center gap-2">
-                                        <input 
-                                            type="text"
-                                            value={chatInput}
-                                            onChange={(e) => setChatInput(e.target.value)}
-                                            placeholder="اكتب تعليمات التعديل..."
-                                            className="flex-1 bg-slate-950/50 border border-white/10 rounded-xl px-4 py-2.5 text-xs font-bold text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                                            disabled={isChatLoading}
-                                        />
-                                        <button 
-                                            type="submit"
-                                            disabled={!chatInput.trim() || isChatLoading}
-                                            className="p-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-lg transition-all disabled:opacity-50 active:scale-95"
-                                        >
-                                            <SendIcon className="w-4 h-4" />
-                                        </button>
-                                    </form>
-                                </div>
+                             <div className="shadow-3xl rounded-3xl overflow-hidden border border-white/5">
+                                <RichTextEditor value={finalBody} onChange={setFinalBody} ringColor={theme.ring} minHeight="min-h-[650px]" />
                              </div>
                             
                             <div className="flex flex-col md:flex-row justify-between items-start gap-8 pt-8 border-t border-white/10 bg-slate-900/20 p-6 rounded-3xl border border-white/5">
